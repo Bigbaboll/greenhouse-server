@@ -1,17 +1,16 @@
 {
   "name": "greenhouse-server",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["iot", "greenhouse", "express"],
+  "author": "Your Name",
   "license": "ISC",
-  "description": "",
+  "description": "Smart Greenhouse IoT Server",
   "dependencies": {
-    "body-parser": "^2.2.2",
-    "cors": "^2.8.6",
-    "express": "^5.2.1"
+    "express": "^4.19.2"
   }
 }
