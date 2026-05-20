@@ -405,23 +405,75 @@ app.post('/api/command/:nodeId/ack', (req, res) => {
   console.log('\n✅ 指令执行确认:');
   console.log('  节点:', nodeId);
   console.log('  指令ID:', command_id);
+  console.log('  指令ID类型:', typeof command_id);
   console.log('  结果:', result);
 
-  if (!commandQueue[nodeId] || commandQueue[nodeId].length === 0) {
+  // ==================== 参数验证 ====================
+  if (!nodeId || !command_id) {
     return res.status(400).json({
       status: 'error',
-      message: 'No command to acknowledge'
+      message: 'Missing required fields: nodeId and command_id'
     });
   }
 
-  // 从队列中移除已执行的指令
+  // ==================== 检查节点是否存在 ====================
+  if (!commandQueue[nodeId]) {
+    console.log('  ❌ 节点不存在');
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  // ==================== 检查队列是否为空 ====================
+  if (commandQueue[nodeId].length === 0) {
+    console.log('  ⚠️  队列为空，无指令可确认');
+    return res.status(400).json({
+      status: 'error',
+      message: 'No command in queue to acknowledge'
+    });
+  }
+
+  // ==================== 获取队列中的第一个指令 ====================
+  const firstCommand = commandQueue[nodeId][0];
+  
+  console.log('  队列中第一个指令ID:', firstCommand.id);
+  console.log('  队列中第一个指令ID类型:', typeof firstCommand.id);
+  console.log('  队列中第一个指令:', firstCommand.action);
+  
+  // ==================== 检查command_id是否匹配 ====================
+  // 注意：可能一个是数字，一个是字符串，所以用 != 而不是 !==
+  if (Number(firstCommand.id) !== Number(command_id)) {
+    console.log(`  ❌ ID不匹配!`);
+    console.log(`     期望: ${firstCommand.id} (${typeof firstCommand.id})`);
+    console.log(`     实际: ${command_id} (${typeof command_id})`);
+    return res.status(400).json({
+      status: 'error',
+      message: 'Command ID mismatch',
+      expected_id: firstCommand.id,
+      received_id: command_id
+    });
+  }
+
+  // ==================== ID匹配，从队列中移除指令 ====================
   const executedCommand = commandQueue[nodeId].shift();
   executedCommand.status = 'completed';
   executedCommand.result = result;
+  executedCommand.completed_at = new Date().toISOString();
+
+  console.log(`  ✅ 指令已从队列中移除！`);
+  console.log(`     已执行指令: ${executedCommand.action}`);
+  console.log(`     当前队列长度: ${commandQueue[nodeId].length}`);
 
   res.json({
     status: 'success',
-    message: 'Command acknowledged'
+    message: 'Command acknowledged',
+    removed_command: {
+      id: executedCommand.id,
+      action: executedCommand.action,
+      result: result,
+      completed_at: executedCommand.completed_at
+    }
   });
 });
 
