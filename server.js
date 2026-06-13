@@ -16,6 +16,22 @@ app.use((req, res, next) => {
 
 // ==================== 全局数据存储 ====================
 
+// ==================== 简化的阈值配置存储 ====================
+let thresholdConfig = {
+  nodeA: {
+    temperature_max: 30,        // 温度上限（°C）
+    light_min: 100,             // 光照下限（lux）
+    updated_at: null,
+    updated_by: "system"
+  },
+  nodeB: {
+    temperature_max: 30,
+    light_min: 100,
+    updated_at: null,
+    updated_by: "system"
+  }
+};
+
 // 最新数据
 let latestData = {
   nodeA: {
@@ -263,14 +279,16 @@ app.get('/api/status', (req, res) => {
         last_update: latestData.nodeA.timestamp,
         data_count: dataHistory.nodeA.length,
         pending_commands: commandQueue.nodeA.length,
-        completed_commands: commandHistory.nodeA.length
+        completed_commands: commandHistory.nodeA.length,
+        threshold: thresholdConfig.nodeA
       },
       nodeB: {
         status: latestData.nodeB.status,
         last_update: latestData.nodeB.timestamp,
         data_count: dataHistory.nodeB.length,
         pending_commands: commandQueue.nodeB.length,
-        completed_commands: commandHistory.nodeB.length
+        completed_commands: commandHistory.nodeB.length,
+        threshold: thresholdConfig.nodeB
       }
     },
     uptime: process.uptime()
@@ -279,14 +297,41 @@ app.get('/api/status', (req, res) => {
 
 // ==================== 接口7：APP发送控制指令 ====================
 /**
- * APP发送控制指令给节点（HTTP轮询方式）
+ * APP发送控制指令给节点
  * 
  * 请求示例：
  * POST /api/command/nodeA
  * {
- *   "action": "pump_on",
- *   "value": 30
+ *   "action": "string",           // 指令动作
+ *   "value": number|null          // 指令参数（可选）
  * }
+ * 
+ * 指令说明：
+ * 
+ * 【LED指令】
+ * - led_on 打开LED
+ *   * value: null 或不传 → 长期打开
+ *   * value: 秒数 → 运行秒数后自动关闭
+ *   例子: {"action":"led_on","value":30}  → 打开30秒
+ *   例子: {"action":"led_on","value":null}  → 长期打开
+ * 
+ * - led_off 关闭LED
+ *   * value: 忽略
+ *   例子: {"action":"led_off"}
+ * 
+ * 【风扇指令】
+ * - fan_on 打开风扇
+ *   * value: 秒数（必需）→ 运行秒数后自动关闭
+ *   * value: null → 使用默认时间60秒
+ *   例子: {"action":"fan_on","value":60}  → 打开60秒
+ *   例子: {"action":"fan_on","value":null}  → 打开60秒（默认）
+ * 
+ * - fan_off 关闭风扇
+ *   * value: 忽略
+ *   例子: {"action":"fan_off"}
+ * 
+ * 参数范围：
+ *   - value: 1-3600（1秒到1小时）
  * 
  * 响应示例：
  * {
@@ -725,9 +770,171 @@ app.delete('/api/data/reset', (req, res) => {
     nodeB: []
   };
 
+  thresholdConfig = {
+  nodeA: {
+    temperature_max: 30,
+    light_min: 100,
+    updated_at: null,
+    updated_by: "system"
+  },
+  nodeB: {
+    temperature_max: 30,
+    light_min: 100,
+    updated_at: null,
+    updated_by: "system"
+  }
+  };
+
   res.json({
     status: 'success',
     message: 'All data reset'
+  });
+});
+
+// ==================== 接口16：APP设置阈值 ====================
+/**
+ * APP设置阈值
+ * 
+ * 请求示例：
+ * POST /api/threshold/{nodeId}
+ * {
+ *   "temperature_max": 30,
+ *   "light_min": 100
+ * }
+ */
+app.post('/api/threshold/:nodeId', (req, res) => {
+  const nodeId = req.params.nodeId;
+  const { temperature_max, light_min } = req.body;
+
+  console.log('\n⚙️  APP设置阈值:');
+  console.log('  节点:', nodeId);
+  console.log('  温度上限:', temperature_max, '°C');
+  console.log('  光照下限:', light_min, 'lux');
+
+  if (!nodeId) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Missing nodeId'
+    });
+  }
+
+  if (!thresholdConfig[nodeId]) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  // ==================== 数据验证 ====================
+  const errors = [];
+
+  if (temperature_max !== undefined) {
+    if (typeof temperature_max !== 'number' || temperature_max < 15 || temperature_max > 50) {
+      errors.push('temperature_max must be between 15 and 50');
+    }
+  }
+
+  if (light_min !== undefined) {
+    if (typeof light_min !== 'number' || light_min < 0 || light_min > 10000) {
+      errors.push('light_min must be between 0 and 10000');
+    }
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Invalid parameters',
+      errors: errors
+    });
+  }
+
+  // ==================== 更新阈值 ====================
+  if (temperature_max !== undefined) thresholdConfig[nodeId].temperature_max = temperature_max;
+  if (light_min !== undefined) thresholdConfig[nodeId].light_min = light_min;
+
+  thresholdConfig[nodeId].updated_at = new Date().toISOString();
+  thresholdConfig[nodeId].updated_by = 'app';
+
+  console.log('✅ 阈值已更新');
+
+  res.json({
+    status: 'success',
+    message: 'Threshold updated',
+    threshold: thresholdConfig[nodeId]
+  });
+});
+
+// ==================== 接口17：查询阈值 ====================
+app.get('/api/threshold/:nodeId', (req, res) => {
+  const nodeId = req.params.nodeId;
+
+  console.log('🔍 APP查询阈值:', nodeId);
+
+  if (!thresholdConfig[nodeId]) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  res.json({
+    status: 'success',
+    node_id: nodeId,
+    threshold: thresholdConfig[nodeId],
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ==================== 接口18：ESP8266查询阈值 ====================
+app.get('/api/threshold/:nodeId/config', (req, res) => {
+  const nodeId = req.params.nodeId;
+
+  console.log('📥 ESP8266查询阈值:', nodeId);
+
+  if (!thresholdConfig[nodeId]) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  res.json({
+    status: 'success',
+    node_id: nodeId,
+    threshold: {
+      temperature_max: thresholdConfig[nodeId].temperature_max,
+      light_min: thresholdConfig[nodeId].light_min
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ==================== 接口19：重置阈值为默认值 ====================
+app.post('/api/threshold/:nodeId/reset', (req, res) => {
+  const nodeId = req.params.nodeId;
+
+  console.log('🔄 重置阈值:', nodeId);
+
+  if (!thresholdConfig[nodeId]) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  thresholdConfig[nodeId] = {
+    temperature_max: 30,
+    light_min: 100,
+    updated_at: new Date().toISOString(),
+    updated_by: 'system'
+  };
+
+  console.log('✅ 阈值已重置为默认值');
+
+  res.json({
+    status: 'success',
+    message: 'Threshold reset to default',
+    threshold: thresholdConfig[nodeId]
   });
 });
 
