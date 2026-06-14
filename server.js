@@ -19,8 +19,8 @@ app.use((req, res, next) => {
 // ==================== 简化的阈值配置存储 ====================
 let thresholdConfig = {
   nodeA: {
-    temperature_max: 30,        // 温度上限（°C）
-    light_min: 100,             // 光照下限（lux）
+    temperature_max: 30,
+    light_min: 100,
     updated_at: null,
     updated_by: "system"
   },
@@ -30,6 +30,12 @@ let thresholdConfig = {
     updated_at: null,
     updated_by: "system"
   }
+};
+
+// ==================== 新增：阈值下发状态追踪 ====================
+let thresholdPushStatus = {
+  nodeA: { status: 'idle', updated_at: null, pushed_at: null, confirmed_at: null },
+  nodeB: { status: 'idle', updated_at: null, pushed_at: null, confirmed_at: null }
 };
 
 // 最新数据
@@ -71,7 +77,7 @@ let commandHistory = {
 // ==================== 接口1：ESP8266 上传传感器数据 ====================
 /**
  * 接收ESP8266上传的传感器数据
- * 
+ *
  * 请求示例：
  * POST /api/data
  * {
@@ -80,7 +86,7 @@ let commandHistory = {
  *   "humidity": 62,
  *   "light": 450
  * }
- * 
+ *
  * 响应示例：
  * {
  *   "status": "success",
@@ -153,19 +159,9 @@ app.post('/api/data', (req, res) => {
 // ==================== 接口2：查询所有节点最新数据 ====================
 /**
  * APP查询所有节点的最新数据
- * 
+ *
  * 请求示例：
  * GET /api/data
- * 
- * 响应示例：
- * {
- *   "status": "success",
- *   "data": {
- *     "nodeA": {...},
- *     "nodeB": {...}
- *   },
- *   "timestamp": "2026-04-26T12:34:56.789Z"
- * }
  */
 app.get('/api/data', (req, res) => {
   console.log('📥 APP查询所有数据');
@@ -180,7 +176,7 @@ app.get('/api/data', (req, res) => {
 // ==================== 接口3：查询单个节点最新数据 ====================
 /**
  * APP查询单个节点的最新数据
- * 
+ *
  * 请求示例：
  * GET /api/data/nodeA
  */
@@ -206,20 +202,9 @@ app.get('/api/data/:nodeId', (req, res) => {
 // ==================== 接口4：查询节点历史数据 ====================
 /**
  * APP查询节点的历史数据
- * 
+ *
  * 请求示例：
  * GET /api/data/nodeA/history?limit=10
- * 
- * 响应示例：
- * {
- *   "status": "success",
- *   "node_id": "nodeA",
- *   "count": 10,
- *   "data": [
- *     {"temp": 25.5, "humidity": 62, "light": 450, "timestamp": "..."},
- *     ...
- *   ]
- * }
  */
 app.get('/api/data/:nodeId/history', (req, res) => {
   const nodeId = req.params.nodeId;
@@ -248,7 +233,7 @@ app.get('/api/data/:nodeId/history', (req, res) => {
 // ==================== 接口5：健康检查 ====================
 /**
  * 服务器健康检查
- * 
+ *
  * 请求示例：
  * GET /api/health
  */
@@ -263,7 +248,7 @@ app.get('/api/health', (req, res) => {
 // ==================== 接口6：获取服务器状态 ====================
 /**
  * 获取服务器详细状态
- * 
+ *
  * 请求示例：
  * GET /api/status
  */
@@ -280,7 +265,8 @@ app.get('/api/status', (req, res) => {
         data_count: dataHistory.nodeA.length,
         pending_commands: commandQueue.nodeA.length,
         completed_commands: commandHistory.nodeA.length,
-        threshold: thresholdConfig.nodeA
+        threshold: thresholdConfig.nodeA,
+        threshold_push_status: thresholdPushStatus.nodeA   // 新增
       },
       nodeB: {
         status: latestData.nodeB.status,
@@ -288,7 +274,8 @@ app.get('/api/status', (req, res) => {
         data_count: dataHistory.nodeB.length,
         pending_commands: commandQueue.nodeB.length,
         completed_commands: commandHistory.nodeB.length,
-        threshold: thresholdConfig.nodeB
+        threshold: thresholdConfig.nodeB,
+        threshold_push_status: thresholdPushStatus.nodeB   // 新增
       }
     },
     uptime: process.uptime()
@@ -298,47 +285,25 @@ app.get('/api/status', (req, res) => {
 // ==================== 接口7：APP发送控制指令 ====================
 /**
  * APP发送控制指令给节点
- * 
+ *
  * 请求示例：
  * POST /api/command/nodeA
  * {
- *   "action": "string",           // 指令动作
- *   "value": number|null          // 指令参数（可选）
+ *   "action": "FAN_ON",
+ *   "value": 30
  * }
- * 
- * 指令说明：
- * 
- * 【LED指令】
- * - led_on 打开LED
- *   * value: null 或不传 → 长期打开
- *   * value: 秒数 → 运行秒数后自动关闭
- *   例子: {"action":"led_on","value":30}  → 打开30秒
- *   例子: {"action":"led_on","value":null}  → 长期打开
- * 
- * - led_off 关闭LED
- *   * value: 忽略
- *   例子: {"action":"led_off"}
- * 
- * 【风扇指令】
- * - fan_on 打开风扇
- *   * value: 秒数（必需）→ 运行秒数后自动关闭
- *   * value: null → 使用默认时间60秒
- *   例子: {"action":"fan_on","value":60}  → 打开60秒
- *   例子: {"action":"fan_on","value":null}  → 打开60秒（默认）
- * 
- * - fan_off 关闭风扇
- *   * value: 忽略
- *   例子: {"action":"fan_off"}
- * 
- * 参数范围：
- *   - value: 1-3600（1秒到1小时）
- * 
- * 响应示例：
+ *
+ * 响应新增字段：
  * {
  *   "status": "success",
  *   "message": "Command queued",
  *   "command_id": 1704067255000,
- *   "queue_length": 1
+ *   "queue_length": 1,
+ *   "result_query": {                          // 新增：告知APP如何轮询结果
+ *     "method": "GET",
+ *     "url": "/api/command/nodeA/result/1704067255000",
+ *     "description": "每2秒查询一次，90秒超时"
+ *   }
  * }
  */
 app.post('/api/command/:nodeId', (req, res) => {
@@ -382,30 +347,30 @@ app.post('/api/command/:nodeId', (req, res) => {
     status: 'success',
     message: 'Command queued',
     command_id: command.id,
-    queue_length: commandQueue[nodeId].length
+    queue_length: commandQueue[nodeId].length,
+    // ==================== 新增：引导APP轮询结果 ====================
+    result_query: {
+      method: 'GET',
+      url: `/api/command/${nodeId}/result/${command.id}`,
+      description: '请使用此接口轮询查询指令执行结果，建议每2秒查询一次，超时时间建议90秒'
+    }
   });
 });
 
 // ==================== 接口8：ESP8266查询待执行指令 ====================
 /**
  * ESP8266定期查询是否有待执行的指令
- * 
+ *
  * 请求示例：
  * GET /api/command/nodeA
- * 
+ *
  * 响应示例1（有指令）：
  * {
  *   "status": "success",
  *   "has_command": true,
- *   "command": {
- *     "id": 1704067255000,
- *     "action": "pump_on",
- *     "value": 30,
- *     "timestamp": "...",
- *     "status": "pending"
- *   }
+ *   "command": { "id":..., "action":..., "value":... }
  * }
- * 
+ *
  * 响应示例2（无指令）：
  * {
  *   "status": "success",
@@ -443,27 +408,15 @@ app.get('/api/command/:nodeId', (req, res) => {
   }
 });
 
-// ==================== 接口9：ESP8266确认指令已执行（改进版） ====================
+// ==================== 接口9：ESP8266确认指令已执行 ====================
 /**
  * ESP8266确认指令已执行
- * 
+ *
  * 请求示例：
  * POST /api/command/nodeA/ack
  * {
  *   "command_id": 1704067255000,
- *   "result": "success"  // 或 "failed" 或 "timeout"
- * }
- * 
- * 响应示例：
- * {
- *   "status": "success",
- *   "message": "Command acknowledged",
- *   "removed_command": {
- *     "id": 1704067255000,
- *     "action": "pump_on",
- *     "result": "success",
- *     "completed_at": "..."
- *   }
+ *   "result": "success"   // 或 "failed" / "timeout"
  * }
  */
 app.post('/api/command/:nodeId/ack', (req, res) => {
@@ -501,10 +454,10 @@ app.post('/api/command/:nodeId/ack', (req, res) => {
 
   // ==================== 获取队列中的第一个指令 ====================
   const firstCommand = commandQueue[nodeId][0];
-  
+
   console.log('  队列中第一个指令ID:', firstCommand.id);
   console.log('  队列中第一个指令:', firstCommand.action);
-  
+
   // ==================== 检查command_id是否匹配 ====================
   if (Number(firstCommand.id) !== Number(command_id)) {
     console.log(`  ❌ ID不匹配!`);
@@ -526,13 +479,24 @@ app.post('/api/command/:nodeId/ack', (req, res) => {
 
   // ==================== 保存到历史记录 ====================
   commandHistory[nodeId].push(executedCommand);
-
-  // 保留最近100条
   if (commandHistory[nodeId].length > 100) {
     commandHistory[nodeId].shift();
   }
 
-  // ==================== 根据执行结果打印不同的日志 ====================
+  // ==================== 新增：阈值指令ACK同步更新thresholdPushStatus ====================
+  const thresholdActions = ['TEMP_MAX', 'LIGHT_MIN', 'temp_max', 'light_min'];
+  if (thresholdActions.includes(executedCommand.action)) {
+    if (result === 'success') {
+      thresholdPushStatus[nodeId].status = 'confirmed';
+      thresholdPushStatus[nodeId].confirmed_at = new Date().toISOString();
+      console.log(`  ⚙️  阈值指令执行成功: ${executedCommand.action}`);
+    } else {
+      thresholdPushStatus[nodeId].status = result;   // failed 或 timeout
+      console.log(`  ⚙️  阈值指令执行失败: ${executedCommand.action} → ${result}`);
+    }
+  }
+
+  // ==================== 打印执行结果日志 ====================
   if (result === 'success') {
     console.log(`  ✅ 指令执行成功！`);
   } else if (result === 'failed') {
@@ -542,7 +506,7 @@ app.post('/api/command/:nodeId/ack', (req, res) => {
   } else {
     console.log(`  ⚠️  指令执行状态未知: ${result}`);
   }
-  
+
   console.log(`  当前队列长度: ${commandQueue[nodeId].length}`);
   console.log(`  历史记录数: ${commandHistory[nodeId].length}`);
 
@@ -561,19 +525,9 @@ app.post('/api/command/:nodeId/ack', (req, res) => {
 // ==================== 接口10：查询所有待执行指令 ====================
 /**
  * APP查询所有待执行指令
- * 
+ *
  * 请求示例：
  * GET /api/commands
- * 
- * 响应示例：
- * {
- *   "status": "success",
- *   "commands": {
- *     "nodeA": [...],
- *     "nodeB": [...]
- *   },
- *   "timestamp": "..."
- * }
  */
 app.get('/api/commands', (req, res) => {
   console.log('📋 APP查询所有待执行指令');
@@ -587,30 +541,10 @@ app.get('/api/commands', (req, res) => {
 
 // ==================== 接口11：查询已执行指令历史 ====================
 /**
- * APP查询已执行的指令历史（成功/失败/超时）
- * 
+ * APP查询已执行的指令历史
+ *
  * 请求示例：
  * GET /api/command-history/nodeA?limit=10
- * 
- * 响应示例：
- * {
- *   "status": "success",
- *   "node_id": "nodeA",
- *   "count": 5,
- *   "data": [
- *     {
- *       "id": 1704067255000,
- *       "action": "pump_on",
- *       "value": 30,
- *       "result": "success",
- *       "status": "completed",
- *       "timestamp": "...",
- *       "completed_at": "..."
- *     },
- *     ...
- *   ],
- *   "timestamp": "..."
- * }
  */
 app.get('/api/command-history/:nodeId', (req, res) => {
   const nodeId = req.params.nodeId;
@@ -638,21 +572,10 @@ app.get('/api/command-history/:nodeId', (req, res) => {
 
 // ==================== 接口12：查询指令执行统计 ====================
 /**
- * APP查询指令执行统计（成功率等）
- * 
+ * APP查询指令执行统计
+ *
  * 请求示例：
  * GET /api/command-stats/nodeA
- * 
- * 响应示例：
- * {
- *   "status": "success",
- *   "node_id": "nodeA",
- *   "total": 10,
- *   "successful": 8,
- *   "failed": 2,
- *   "timeout": 0,
- *   "success_rate": "80%"
- * }
  */
 app.get('/api/command-stats/:nodeId', (req, res) => {
   const nodeId = req.params.nodeId;
@@ -687,7 +610,7 @@ app.get('/api/command-stats/:nodeId', (req, res) => {
 // ==================== 接口13：清空指令队列 ====================
 /**
  * 清空指定节点的指令队列（仅用于调试）
- * 
+ *
  * 请求示例：
  * DELETE /api/command/nodeA
  */
@@ -715,7 +638,7 @@ app.delete('/api/command/:nodeId', (req, res) => {
 // ==================== 接口14：清空指令历史 ====================
 /**
  * 清空指定节点的指令历史（仅用于调试）
- * 
+ *
  * 请求示例：
  * DELETE /api/command-history/nodeA
  */
@@ -743,7 +666,7 @@ app.delete('/api/command-history/:nodeId', (req, res) => {
 // ==================== 接口15：重置所有数据 ====================
 /**
  * 重置所有数据（仅用于调试/测试）
- * 
+ *
  * 请求示例：
  * DELETE /api/data/reset
  */
@@ -771,18 +694,24 @@ app.delete('/api/data/reset', (req, res) => {
   };
 
   thresholdConfig = {
-  nodeA: {
-    temperature_max: 30,
-    light_min: 100,
-    updated_at: null,
-    updated_by: "system"
-  },
-  nodeB: {
-    temperature_max: 30,
-    light_min: 100,
-    updated_at: null,
-    updated_by: "system"
-  }
+    nodeA: {
+      temperature_max: 30,
+      light_min: 100,
+      updated_at: null,
+      updated_by: "system"
+    },
+    nodeB: {
+      temperature_max: 30,
+      light_min: 100,
+      updated_at: null,
+      updated_by: "system"
+    }
+  };
+
+  // ==================== 新增：同步重置阈值下发状态 ====================
+  thresholdPushStatus = {
+    nodeA: { status: 'idle', updated_at: null, pushed_at: null, confirmed_at: null },
+    nodeB: { status: 'idle', updated_at: null, pushed_at: null, confirmed_at: null }
   };
 
   res.json({
@@ -793,13 +722,27 @@ app.delete('/api/data/reset', (req, res) => {
 
 // ==================== 接口16：APP设置阈值 ====================
 /**
- * APP设置阈值
- * 
+ * APP设置阈值，同时将阈值变更作为指令入队，支持ACK追踪
+ *
  * 请求示例：
- * POST /api/threshold/{nodeId}
+ * POST /api/threshold/nodeA
  * {
- *   "temperature_max": 30,
- *   "light_min": 100
+ *   "temperature_max": 35,
+ *   "light_min": 500
+ * }
+ *
+ * 响应新增字段：
+ * {
+ *   "status": "success",
+ *   "threshold": {...},
+ *   "queued_commands": [          // 新增：可用于轮询执行结果
+ *     {
+ *       "command_id": 1704067255000,
+ *       "action": "TEMP_MAX",
+ *       "value": 35,
+ *       "result_query": "/api/command/nodeA/result/1704067255000"
+ *     }
+ *   ]
  * }
  */
 app.post('/api/threshold/:nodeId', (req, res) => {
@@ -855,12 +798,54 @@ app.post('/api/threshold/:nodeId', (req, res) => {
   thresholdConfig[nodeId].updated_at = new Date().toISOString();
   thresholdConfig[nodeId].updated_by = 'app';
 
-  console.log('✅ 阈值已更新');
+  // ==================== 新增：阈值变更作为指令入队，支持ACK追踪 ====================
+  const thresholdCommands = [];
+
+  if (temperature_max !== undefined) {
+    const cmd = {
+      id: Date.now(),
+      action: 'TEMP_MAX',
+      value: temperature_max,
+      timestamp: new Date().toISOString(),
+      status: 'pending'
+    };
+    commandQueue[nodeId].push(cmd);
+    thresholdCommands.push(cmd);
+  }
+
+  if (light_min !== undefined) {
+    const cmd = {
+      id: Date.now() + 1,    // +1 防止同毫秒导致ID重复
+      action: 'LIGHT_MIN',
+      value: light_min,
+      timestamp: new Date().toISOString(),
+      status: 'pending'
+    };
+    commandQueue[nodeId].push(cmd);
+    thresholdCommands.push(cmd);
+  }
+
+  // ==================== 新增：更新阈值下发状态 ====================
+  thresholdPushStatus[nodeId] = {
+    status: 'pending',
+    updated_at: thresholdConfig[nodeId].updated_at,
+    pushed_at: new Date().toISOString(),
+    confirmed_at: null
+  };
+
+  console.log('✅ 阈值已更新并加入指令队列');
 
   res.json({
     status: 'success',
-    message: 'Threshold updated',
-    threshold: thresholdConfig[nodeId]
+    message: 'Threshold updated and queued for delivery',
+    threshold: thresholdConfig[nodeId],
+    // ==================== 新增：返回可追踪的指令信息 ====================
+    queued_commands: thresholdCommands.map(cmd => ({
+      command_id: cmd.id,
+      action: cmd.action,
+      value: cmd.value,
+      result_query: `/api/command/${nodeId}/result/${cmd.id}`
+    }))
   });
 });
 
@@ -929,12 +914,133 @@ app.post('/api/threshold/:nodeId/reset', (req, res) => {
     updated_by: 'system'
   };
 
+  // ==================== 新增：重置时同步清除下发状态 ====================
+  thresholdPushStatus[nodeId] = {
+    status: 'idle',
+    updated_at: new Date().toISOString(),
+    pushed_at: null,
+    confirmed_at: null
+  };
+
   console.log('✅ 阈值已重置为默认值');
 
   res.json({
     status: 'success',
     message: 'Threshold reset to default',
     threshold: thresholdConfig[nodeId]
+  });
+});
+
+// ==================== 新增接口20：APP查询单条指令执行结果 ====================
+/**
+ * APP通过command_id精确查询单条指令的执行状态
+ *
+ * 请求示例：
+ * GET /api/command/nodeA/result/1704067255000
+ *
+ * 响应示例1（指令还在队列中，未执行）：
+ * {
+ *   "status": "success",
+ *   "command_id": 1704067255000,
+ *   "execute_status": "pending",
+ *   "command": { "id":..., "action":"FAN_ON", "value":30, ... }
+ * }
+ *
+ * 响应示例2（指令已执行）：
+ * {
+ *   "status": "success",
+ *   "command_id": 1704067255000,
+ *   "execute_status": "success",    // 或 "failed" / "timeout"
+ *   "command": { "id":..., "action":"FAN_ON", "result":"success", "completed_at":"..." }
+ * }
+ *
+ * 响应示例3（找不到该指令）：
+ * {
+ *   "status": "error",
+ *   "message": "Command not found"
+ * }
+ */
+app.get('/api/command/:nodeId/result/:commandId', (req, res) => {
+  const nodeId = req.params.nodeId;
+  const commandId = Number(req.params.commandId);
+
+  console.log('🔍 APP查询指令结果:', nodeId, 'commandId:', commandId);
+
+  if (!commandQueue[nodeId] || !commandHistory[nodeId]) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  // 先在待执行队列中查找（说明还未执行完）
+  const pendingCmd = commandQueue[nodeId].find(cmd => Number(cmd.id) === commandId);
+  if (pendingCmd) {
+    return res.json({
+      status: 'success',
+      command_id: commandId,
+      execute_status: 'pending',
+      command: pendingCmd
+    });
+  }
+
+  // 再在历史记录中查找（已执行完成）
+  const doneCmd = commandHistory[nodeId].find(cmd => Number(cmd.id) === commandId);
+  if (doneCmd) {
+    return res.json({
+      status: 'success',
+      command_id: commandId,
+      execute_status: doneCmd.result,    // success / failed / timeout
+      command: doneCmd
+    });
+  }
+
+  // 都找不到
+  return res.status(404).json({
+    status: 'error',
+    message: 'Command not found',
+    command_id: commandId
+  });
+});
+
+// ==================== 新增接口21：查询阈值下发状态 ====================
+/**
+ * APP查询阈值是否已成功下发到硬件
+ *
+ * 请求示例：
+ * GET /api/threshold/nodeA/push-status
+ *
+ * 响应示例：
+ * {
+ *   "status": "success",
+ *   "node_id": "nodeA",
+ *   "push_status": {
+ *     "status": "confirmed",      // idle / pending / confirmed / failed / timeout
+ *     "updated_at": "...",        // APP最后一次设置阈值的时间
+ *     "pushed_at": "...",         // 指令入队时间
+ *     "confirmed_at": "..."       // STM32确认执行完成的时间
+ *   },
+ *   "current_threshold": { "temperature_max": 35, "light_min": 500 }
+ * }
+ */
+app.get('/api/threshold/:nodeId/push-status', (req, res) => {
+  const nodeId = req.params.nodeId;
+
+  console.log('📡 APP查询阈值下发状态:', nodeId);
+
+  if (!thresholdPushStatus[nodeId]) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Node not found'
+    });
+  }
+
+  res.json({
+    status: 'success',
+    node_id: nodeId,
+    push_status: thresholdPushStatus[nodeId],
+    current_threshold: thresholdConfig[nodeId],
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -949,29 +1055,37 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`${'='.repeat(70)}`);
 
   console.log(`\n📚 API接口列表：`);
-  
+
   console.log(`\n  【数据采集 - ESP8266使用】`);
-  console.log(`    POST /api/data                    - 上传传感器数据`);
-  console.log(`    GET  /api/command/:nodeId         - 查询待执行指令`);
-  console.log(`    POST /api/command/:nodeId/ack     - 确认指令已执行（含执行状态）`);
+  console.log(`    POST /api/data                              - 上传传感器数据`);
+  console.log(`    GET  /api/command/:nodeId                   - 查询待执行指令`);
+  console.log(`    POST /api/command/:nodeId/ack              - 确认指令已执行`);
 
   console.log(`\n  【数据查询 - APP使用】`);
-  console.log(`    GET  /api/data                    - 查询所有节点最新数据`);
-  console.log(`    GET  /api/data/:nodeId            - 查询单个节点最新数据`);
-  console.log(`    GET  /api/data/:nodeId/history    - 查询节点历史数据`);
-  console.log(`    GET  /api/status                  - 查询服务器状态`);
+  console.log(`    GET  /api/data                             - 查询所有节点最新数据`);
+  console.log(`    GET  /api/data/:nodeId                     - 查询单个节点最新数据`);
+  console.log(`    GET  /api/data/:nodeId/history             - 查询节点历史数据`);
+  console.log(`    GET  /api/status                           - 查询服务器状态`);
 
   console.log(`\n  【控制指令 - APP使用】`);
-  console.log(`    POST /api/command/:nodeId         - 发送控制指令`);
-  console.log(`    GET  /api/commands                - 查询所有待执行指令`);
-  console.log(`    GET  /api/command-history/:nodeId - 查询已执行指令历史`);
-  console.log(`    GET  /api/command-stats/:nodeId   - 查询指令执行统计`);
+  console.log(`    POST /api/command/:nodeId                  - 发送控制指令`);
+  console.log(`    GET  /api/command/:nodeId/result/:cmdId    - 查询单条指令执行结果 ✨新增`);
+  console.log(`    GET  /api/commands                         - 查询所有待执行指令`);
+  console.log(`    GET  /api/command-history/:nodeId          - 查询已执行指令历史`);
+  console.log(`    GET  /api/command-stats/:nodeId            - 查询指令执行统计`);
+
+  console.log(`\n  【阈值管理 - APP使用】`);
+  console.log(`    POST /api/threshold/:nodeId                - 设置阈值（含ACK追踪）✨更新`);
+  console.log(`    GET  /api/threshold/:nodeId                - 查询阈值`);
+  console.log(`    GET  /api/threshold/:nodeId/push-status    - 查询阈值下发状态 ✨新增`);
+  console.log(`    POST /api/threshold/:nodeId/reset          - 重置阈值为默认值`);
+  console.log(`    GET  /api/threshold/:nodeId/config         - ESP8266查询阈值`);
 
   console.log(`\n  【调试接口】`);
-  console.log(`    GET  /api/health                  - 健康检查`);
-  console.log(`    DELETE /api/command/:nodeId       - 清空指令队列`);
-  console.log(`    DELETE /api/command-history/:nodeId - 清空指令历史`);
-  console.log(`    DELETE /api/data/reset            - 重置所有数据`);
+  console.log(`    GET  /api/health                           - 健康检查`);
+  console.log(`    DELETE /api/command/:nodeId                - 清空指令队列`);
+  console.log(`    DELETE /api/command-history/:nodeId        - 清空指令历史`);
+  console.log(`    DELETE /api/data/reset                     - 重置所有数据`);
 
   console.log(`\n${'='.repeat(70)}\n`);
 });
