@@ -1044,6 +1044,48 @@ app.get('/api/threshold/:nodeId/push-status', (req, res) => {
   });
 });
 
+// ==================== 指令队列超时自动清理（定时任务） ====================
+const CMD_TIMEOUT_MS = 120000;   // 指令超时时间：120秒（给ESP8266的60秒ACK留余量）
+const CLEANUP_INTERVAL_MS = 10000; // 每10秒检查一次
+
+setInterval(() => {
+  const now = Date.now();
+  for (const nodeId of ['nodeA', 'nodeB']) {
+    const queue = commandQueue[nodeId];
+    
+    // 只检查队首（ESP8266是按顺序取的，队首最早）
+    while (queue.length > 0) {
+      const firstCmd = queue[0];
+      const cmdTime = new Date(firstCmd.timestamp).getTime();  // ISO字符串转数字时间戳
+      
+      if (now - cmdTime > CMD_TIMEOUT_MS) {
+        // 超时，从队列移除
+        const timeoutCmd = queue.shift();
+        timeoutCmd.status = 'timeout';
+        timeoutCmd.result = 'timeout';
+        timeoutCmd.completed_at = new Date().toISOString();
+        
+        // 存入历史记录
+        commandHistory[nodeId].push(timeoutCmd);
+        if (commandHistory[nodeId].length > 100) {
+          commandHistory[nodeId].shift();
+        }
+        
+        // 如果是阈值指令，同步更新下发状态
+        const thresholdActions = ['TEMP_MAX', 'LIGHT_MIN', 'temp_max', 'light_min'];
+        if (thresholdActions.includes(timeoutCmd.action)) {
+          thresholdPushStatus[nodeId].status = 'timeout';
+        }
+        
+        console.log(`⏱️  [超时清理] ${nodeId} 指令超时: ${timeoutCmd.action} (ID: ${timeoutCmd.id})`);
+      } else {
+        // 队首没超时，后面的更不会超时，直接跳出
+        break;
+      }
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+
 // ==================== 启动服务器 ====================
 
 const PORT = process.env.PORT || 3000;
